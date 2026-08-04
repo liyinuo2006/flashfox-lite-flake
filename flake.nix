@@ -1,5 +1,5 @@
 {
-  description = "闪狐云 Lite 机场客户端 Nix 包(系统代理模式,无 TUN)";
+  description = "闪狐云 Lite 机场客户端 Nix 包(系统代理模式,无 TUN,仅 x86_64-linux)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -14,8 +14,8 @@
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
 
-      # 两个模块共用的选项:enable / package / enableGsettingsSchema。
-      # package 默认直接 callPackage(不依赖 overlay,standalone home-manager 也能用)。
+      # NixOS 模块与 home-manager 模块共用的选项。
+      # package 默认直接 callPackage,不依赖 overlay(standalone home-manager 也能用)。
       # enableGsettingsSchema:闪狐用 gsettings 设置系统代理(org.gnome.system.proxy),
       # NixOS 默认缺该 schema,不装则代理设置静默失败,浏览器不走代理。
       mkOptions =
@@ -43,12 +43,14 @@
         default = flashfox-lite;
       };
 
+      formatter.${system} = pkgs.nixfmt;
+
       # 独立 overlay:想注入 pkgs.flashfox-lite 的场合使用
       overlays.default = final: prev: {
         flashfox-lite = final.callPackage ./package.nix { };
       };
 
-      # NixOS 模块:系统级安装,全用户可见
+      # NixOS 模块:系统级安装(全用户可见,含桌面入口)
       nixosModules.default =
         {
           lib,
@@ -71,7 +73,7 @@
           };
         };
 
-      # home-manager 模块:用户级安装,standalone hm 也可用
+      # home-manager 模块:用户级安装(独立 hm 可用;注意此方式需用户自行 allowUnfree)
       homeModules.default =
         {
           lib,
