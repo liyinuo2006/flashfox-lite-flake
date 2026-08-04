@@ -33,6 +33,8 @@ sudo nixos-rebuild switch --flake .#mynixos
 
 ## 三种接入方式
 
+> **nixosModules 与 homeModules 二选一,不要同时启用**(两者定义同名选项会冲突)。
+
 | 方式 | 说明 |
 |---|---|
 | `nixosModules.default` | 系统级安装,全用户可见,含桌面入口(推荐) |
