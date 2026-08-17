@@ -1100,5 +1100,77 @@ clash-verge 在 NixOS 上 TUN 正常,因为:
 
 ---
 
-**文档结束。下次开发 TUN 模式时,从第 10 节"建议路径"开始,优先做 10.1(Arch 对比)
-和 10.2(stat 检测假说验证)。**
+**前文结束。TUN 已于 2026-08-18 彻底解决,最终根因与方案见第 15 节(以第 15 节为准)。**
+---
+
+## 15. 最终解决方案(2026-08-18,TUN 全功能验证通过)
+
+> 本节是对上文各假设的最终裁决与修正。阅读前文时请以本节为准。
+
+### 15.1 三个真凶(及对前文的修正)
+
+1. **接口名 bug 的凶手是闪狐自己,不是内核**
+   前文 §4.1 认为"内核 TUN 驱动把非 ASCII 字节替换为下划线"。实测证明错误:
+   在 6.18 内核上直接 TUNSETIFF 请求 `闪狐云_Lite`,内核原样创建中文名
+   (tuntest.py)。替换发生在闪狐创建 TUN 设备的那一侧(它对设备名做了 ASCII 化,
+   但加 ip rule 时又用原始中文名)→ `iif 闪狐云_Lite [detached]` → 出站防环
+   规则失效 → 全断网。**修复:把 patchClashConfig.tun.device 改为 "Meta"**
+   (ASCII,两侧一致,规则正常挂载)。本文档 §7 的 systemd 轮询 daemon、§12 的
+   8900/8999 手补规则全部不再需要。
+
+2. **"fake-ip 入站不转发 / 降级运行" 假说不成立,真凶是 NixOS 防火墙**
+   前文 §6.2/6.3 推测闪狐因 stat 检测 suid 位失败而"降级运行"。抓包 + sing-tun
+   v0.4.17 源码确认:TCP 进入 TUN 后,mihomo 的 tun2socks 桥接把 SYN 改写成发往
+   **本机 198.18.0.1:<随机端口>**(它自己的 TCP forwarder 监听)并从 TUN 接口送回
+   本机;NixOS 防火墙默认丢弃非信任接口的入站包 → 握手永远失败 → 所有 TCP 全断
+   (Arch 无防火墙所以闪狐原生可用)。**修复:`networking.firewall.trustedInterfaces = [ "Meta" ]`**。
+   1053 不监听、iptables 空表同样是防火墙/监听方向的观察假象,非降级。
+
+3. **每次开 TUN 弹密码框:闪狐对 corePath 做 lstat 检查**
+   前文 §10.2/10.4 的 stat 检测假说方向正确。实测(execve trace)闪狐不执行 stat
+   命令,检查在进程内完成,且对符号链接本身做 lstat → 链接永远过不了
+   (uid=用户、无 suid 位)。普通发行版 chmod +sx 后 core 是 root:root+rws 的真实
+   文件 → 检查通过 → 永不再弹框。NixOS 上需要让 corePath 呈现同样的形态,
+   但存在三重限制:Nix 构建沙箱不能 chown(报 EINVAL)、不能设 suid 位(报 EPERM),
+   store 又是 nosuid 挂载。**修复(三层)**:
+   - core 原路径放 0755 跳板脚本(真实文件,挂载点 + 兜底);
+   - `flashfox-core-mount.service` 把 `/run/wrappers/bin/flashfox-core`
+     (root:root+suid 的真 wrapper)`mount --bind` 到 corePath → lstat/stat 直接
+     看到 wrapper 本体 → 检查通过 → **完全不弹密码框**;
+   - 包内给 GUI 注入假 sudo:吞掉针对 FlashFoxLiteCore 的 chown/chmod 命令
+     (只读 store 上必然失败且是 no-op),其余 sudo 原样放行。
+   注意:当前 nixpkgs 中 wrapper 由 `suid-sgid-wrappers.service` 创建(不再是
+   名为 wrappers 的 activationScript),挂载服务需排在其后。
+
+### 15.2 最终 NixOS 模块结构(flake.nix 的 nixosModules.default + enableTun)
+
+```
+enableTun = true 时:
+  package                        = callPackage ./package.nix { tunSupport = true; }
+  boot.kernelModules             = [ "tun" ]
+  security.wrappers.flashfox-core = setuid root;source = ...Core.bin;
+                                   permissions = "u+rwx,g+x,o+x"  # stat 输出含 rws
+  systemd.services.flashfox-core-mount  # bind-mount wrapper → corePath(免密码框)
+  networking.firewall.trustedInterfaces = [ "Meta" ]   # tun2socks 桥接不被丢弃
+  networking.firewall.checkReversePath  = "loose"      # 防非对称回包被 rp_filter 丢
+```
+
+### 15.3 验证结果(2026-08-18)
+
+- 开 TUN 不再弹任何密码框;反复开关正常
+- TUN 下国内直连(baidu 200)、国外走节点(google 200)全部正常
+- fake-ip DNS 劫持正常(google.com 解析为 198.18.0.x)
+- 系统代理模式与 TUN 模式互不干扰,均可独立使用
+- 对比参照:clash-verge 在本机同环境用 systemd root service(service mode)实现,
+  闪狐闭源无法改造 GUI 的 fork 协议,故本方案用 wrapper + bind-mount 达成等价效果
+
+### 15.4 遗留观察(不影响使用,记录备查)
+
+- 开 TUN 时 mihomo 的 dns.listen(1053)不监听、无 iptables REDIRECT:
+  经抓包确认其 DNS 劫持走 TUN 内 `dns-hijack: any:53` 路径,工作正常,
+  1053/iptables 并非必需。
+- TUN 接口计数器方向:AF_PACKET 在 tun 设备上只能看到 mihomo 写回主机的方向,
+  判断"SYN 是否进 TUN"需看 /proc/net/dev 的 TX 增量。
+
+---
+
