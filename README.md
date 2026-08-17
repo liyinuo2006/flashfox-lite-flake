@@ -37,48 +37,34 @@ sudo nixos-rebuild switch --flake .#mynixos
 
 ## TUN 模式
 
-### 一次性配置(必须,只做一次)
+**零手动配置**:与 clash-verge 的 `tunMode` 一样,`enableTun = true` 后 rebuild
+即可使用,首次启动闪狐时包内包装器会自动完成设备名修正(见下)。
 
-闪狐把 TUN 设备名硬编码为中文「闪狐云_Lite」,而它创建 TUN 接口时会把非 ASCII 字节
-替换为下划线(实际接口 `__________Lite`),加路由规则时却用中文原名 → 规则
-`[detached]` → 流量在 TUN 内死循环、全断网。解法是把设备名改成 ASCII(闪狐会记住,
-不会改回;重置应用数据后需重跑):
+### 原理(模块自动完成)
 
-```bash
-# 完全退出闪狐后执行
-python3 - <<'EOF'
-import json, pathlib
-p = pathlib.Path.home() / ".local/share/ffclient.app/shared_preferences.json"
-d = json.loads(p.read_text(encoding="utf-8"))
-fc = json.loads(d["flutter.config"])
-fc.setdefault("patchClashConfig", {}).setdefault("tun", {})["device"] = "Meta"
-d["flutter.config"] = json.dumps(fc, ensure_ascii=False)
-p.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
-print("tun.device =", fc["patchClashConfig"]["tun"]["device"])
-EOF
-```
+闪狐有两个与 NixOS 冲突的设计,本模块的 `enableTun` 分别做了适配:
 
-> 设备名必须与本模块信任的接口名一致(默认 `Meta`,见 `networking.firewall.trustedInterfaces`)。
-
-### 原理(模块自动完成,无需手动)
-
-闪狐的提权协议是「给 core 文件 chmod +sx,再 fork 它以 setuid root 运行」,
-与 NixOS 的只读 nosuid store 直接冲突。本模块的 `enableTun` 做了以下适配:
-
-1. **真提权** —— `security.wrappers.flashfox-core`:core 本体改名为
-   `FlashFoxLiteCore.bin`,由 NixOS 生成 setuid root wrapper(`/run/wrappers/bin/flashfox-core`);
-2. **跳板文件** —— core 原路径放一个 0755 脚本(exec 上面的 wrapper),作为挂载点和兜底;
-3. **免弹密码框** —— 闪狐开 TUN 前会 lstat core 文件,要求 root:root+suid 才免弹
-   密码框;Nix 构建沙箱无法给 store 文件设 suid 位,因此用
-   `flashfox-core-mount.service` 把真 wrapper `mount --bind` 到 core 路径上,
-   检查直接看到 wrapper 本体 → 和普通发行版一样**完全不弹密码框**;
-4. **假 sudo 兜底** —— 若闪狐仍执行 `sudo chown/chmod`(打只读 store 必然失败),
-   包内给 GUI 的 PATH 注入了只吞掉该命令的假 sudo,其余 sudo 不受影响;
-5. **防火墙** —— `trustedInterfaces = [ "Meta" ]`:mihomo 的 tun2socks 桥接在
+1. **TUN 设备名 bug(自动修复)** —— 闪狐把设备名硬编码为中文「闪狐云_Lite」,
+   创建接口时把非 ASCII 字节替换成下划线(实际接口 `__________Lite`),加 ip rule
+   时却用中文原名 → 规则 `[detached]` → 流量死循环全断网。包内包装器在 GUI
+   **每次启动前**把 `patchClashConfig.tun.device` 幂等改为 `Meta`
+   (只在值不同时写文件),接口名与规则名一致,规则正常挂载;
+2. **提权(替代 chmod +sx)** —— 闪狐原生做法是给 core 文件 `chmod +sx` 后以
+   setuid root 运行,与 NixOS 只读 nosuid store 冲突:
+   - `security.wrappers.flashfox-core`:core 本体改名为 `FlashFoxLiteCore.bin`,
+     由 NixOS 生成 setuid root wrapper;
+   - core 原路径放 0755 跳板脚本(exec 上面的 wrapper),作为挂载点与兜底;
+   - **免弹密码框**:闪狐开 TUN 前会 lstat core 文件,要求 root:root+suid 才免弹
+     密码框;Nix 构建沙箱无法给 store 文件设 suid 位,因此
+     `flashfox-core-mount.service` 把真 wrapper `mount --bind` 到 core 路径上,
+     检查直接看到 wrapper 本体 → 和普通发行版一样**完全不弹密码框**;
+   - **假 sudo 兜底**:若闪狐仍执行 `sudo chown/chmod`(打只读 store 必然失败),
+     包内给 GUI 的 PATH 注入了只吞掉该命令的假 sudo,其余 sudo 不受影响;
+3. **防火墙** —— `trustedInterfaces = [ "Meta" ]`:mihomo 的 tun2socks 桥接在
    `198.18.0.1:<随机端口>` 起监听并把改写后的 SYN 经 TUN 接口送回本机,
    NixOS 防火墙默认丢非信任接口入站包 → TUN 下所有 TCP 全断(Arch 无防火墙所以原生可用);
-6. **rp_filter** —— `checkReversePath = "loose"`,防 TUN 非对称回包被丢弃;
-7. `boot.kernelModules = [ "tun" ]`。
+4. **rp_filter** —— `checkReversePath = "loose"`,防 TUN 非对称回包被丢弃;
+5. `boot.kernelModules = [ "tun" ]`。
 
 ## 三种接入方式
 

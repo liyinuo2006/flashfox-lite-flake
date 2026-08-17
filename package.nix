@@ -15,9 +15,12 @@
   libdbusmenu,
   jdk,
   xdg-user-dirs,
-  # TUN 布局:true 时 core 改名 .bin,core 原路径放跳板脚本,并给 GUI 注入假 sudo。
-  # 完整机制见 installPhase 的 tunSupport 分支与 flake.nix 的 nixosModules。
+  # TUN 布局:true 时 core 改名 .bin,core 原路径放跳板脚本,给 GUI 注入假 sudo,
+  # 并在每次启动前自动把 TUN 设备名补成 ASCII(见 installPhase 的 tunSupport 分支)。
+  # 完整机制见 installPhase 注释与 flake.nix 的 nixosModules。
   tunSupport ? false,
+  # 启动前修补 shared_preferences.json 用(仅 tunSupport 时进入运行时闭包)
+  jq,
 }:
 
 let
@@ -50,6 +53,8 @@ stdenv.mkDerivation {
     libdbusmenu
     # libdartjni.so 需要 libjvm.so(搜索路径在 preFixup 里补)
     jdk
+    # 启动前修补设备名脚本的依赖(仅 tunSupport 时被引用,进入运行时闭包)
+    jq
   ];
 
   dontConfigure = true;
@@ -78,7 +83,8 @@ stdenv.mkDerivation {
     # - tunSupport 时把假 sudo 目录放在 PATH 最前(见 installPhase 说明)
     wrapProgram $out/bin/flashfox-lite \
       --prefix PATH : ${glib.bin}/bin:${xdg-user-dirs}/bin \
-      ${lib.optionalString tunSupport "--prefix PATH : $out/libexec/flashfox-fake-sudo"}
+      ${lib.optionalString tunSupport "--prefix PATH : $out/libexec/flashfox-fake-sudo"} \
+      ${lib.optionalString tunSupport "--run $out/libexec/flashfox-fix-device"}
   '';
 
   installPhase = ''
@@ -135,6 +141,21 @@ esac
 exec /run/wrappers/bin/sudo "$@"
 FAKE_SUDO_EOF
     chmod +x $out/libexec/flashfox-fake-sudo/sudo
+
+    # 启动前设备名修补:闪狐对中文 TUN 设备名有 bug(创建接口时把非 ASCII 字节
+    # 替换成下划线,加 ip rule 时却用原始中文名 → 规则 [detached] → 死循环全断网)。
+    # 本脚本在 GUI 每次启动前(经 postFixup 的 --run)把 patchClashConfig.tun.device
+    # 幂等改为 "Meta",仅在值不同时写文件;文件不存在时静默跳过。
+    echo "#!${stdenv.shell}" > $out/libexec/flashfox-fix-device
+    cat >> $out/libexec/flashfox-fix-device <<'FIXDEV_EOF'
+set -e
+prefs="$HOME/.local/share/ffclient.app/shared_preferences.json"
+[ -f "$prefs" ] || exit 0
+tmp="$prefs.tmp.$$"
+${jq}/bin/jq 'if (."flutter.config" | type) == "string" then ."flutter.config" |= (fromjson | .patchClashConfig //= {} | .patchClashConfig.tun //= {} | .patchClashConfig.tun.device = "Meta" | tojson) else . end' "$prefs" > "$tmp"
+if cmp -s "$tmp" "$prefs"; then rm -f "$tmp"; else mv "$tmp" "$prefs"; fi
+FIXDEV_EOF
+    chmod +x $out/libexec/flashfox-fix-device
 
 
   '' + ''

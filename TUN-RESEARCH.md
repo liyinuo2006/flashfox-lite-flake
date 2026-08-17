@@ -1147,12 +1147,17 @@ clash-verge 在 NixOS 上 TUN 正常,因为:
 ```
 enableTun = true 时:
   package                        = callPackage ./package.nix { tunSupport = true; }
+                                  # 包内:core → .bin + 跳板脚本 + 假 sudo;
+                                  # GUI 每次启动前自动把 tun.device 幂等改为 "Meta"
   boot.kernelModules             = [ "tun" ]
   security.wrappers.flashfox-core = setuid root;source = ...Core.bin;
                                    permissions = "u+rwx,g+x,o+x"  # stat 输出含 rws
   systemd.services.flashfox-core-mount  # bind-mount wrapper → corePath(免密码框)
   networking.firewall.trustedInterfaces = [ "Meta" ]   # tun2socks 桥接不被丢弃
   networking.firewall.checkReversePath  = "loose"      # 防非对称回包被 rp_filter 丢
+
+零手动步骤:rebuild 后首次启动闪狐即自动完成 device=Meta 修正,
+与 clash-verge 的 serviceMode/tunMode 一样开箱即用。
 ```
 
 ### 15.3 验证结果(2026-08-18)

@@ -69,10 +69,22 @@
         in
         {
           options.programs.flashfox-lite = mkOptions { inherit lib pkgs; } // {
-            enableTun = lib.mkEnableOption "TUN 模式(全流量接管;需在闪狐里把 TUN 设备名设为 ASCII,见 README)";
+            # 开箱即用,无任何手动步骤:设备名修正由包内包装器自动完成
+            # (package.nix 的 flashfox-fix-device,每次启动 GUI 前幂等写入)。
+            enableTun = lib.mkEnableOption "TUN 模式(全流量接管)";
           };
 
           config = lib.mkIf cfg.enable {
+            assertions = [
+              {
+                assertion = cfg.enableTun -> config.security.enableWrappers;
+                message = ''
+                  programs.flashfox-lite.enableTun 依赖 security.enableWrappers
+                  (默认开启)生成 /run/wrappers 下的 setuid wrapper。
+                '';
+              }
+            ];
+
             nixpkgs.overlays = [ self.overlays.default ];
             environment.systemPackages = [
               cfg.package
