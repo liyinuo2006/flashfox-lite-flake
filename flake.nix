@@ -50,6 +50,12 @@
 
       formatter.${system} = pkgs.nixfmt;
 
+      # nix flake check 验证两个布局都能构建(模块实际使用的是 -tun 布局)
+      checks.${system} = {
+        flashfox-lite = pkgs.callPackage ./package.nix { };
+        flashfox-lite-tun = pkgs.callPackage ./package.nix { tunSupport = true; };
+      };
+
       # 独立 overlay:想注入 pkgs.flashfox-lite 的场合使用
       overlays.default = final: prev: {
         flashfox-lite = final.callPackage ./package.nix { };

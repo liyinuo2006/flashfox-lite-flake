@@ -167,8 +167,11 @@ FIXDEV_EOF
     description = "闪狐云 Lite(机场代理客户端)";
     homepage = "https://www.flashfox.cloud/";
     license = lib.licenses.unfree;
-    platforms = lib.platforms.linux;
+    # 官方 deb 只有 amd64
+    platforms = [ "x86_64-linux" ];
     mainProgram = "flashfox-lite";
+    # 直接分发上游二进制,无源码构建
+    sourceProvenance = [ lib.sourceTypes.binaryNativeCode ];
   };
 }
 
