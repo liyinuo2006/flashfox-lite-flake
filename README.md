@@ -14,7 +14,7 @@
 ## 快速开始
 
 ```nix
-# flake.nix
+# flake.nix(想锁定已验证版本可用 ".../v1.0.0")
 inputs.flashfox-lite = {
   url = "github:liyinuo2006/flashfox-lite-flake";
   inputs.nixpkgs.follows = "nixpkgs";
@@ -23,6 +23,7 @@ inputs.flashfox-lite = {
 # 任一配置文件(或 nixosConfigurations.modules 列表)
 { inputs, ... }: {
   imports = [ inputs.flashfox-lite.nixosModules.default ];
+  nixpkgs.config.allowUnfree = true;   # 闭源 deb,必须允许 unfree
   programs.flashfox-lite = {
     enable = true;
     enableTun = true;   # TUN 模式(可选;不开则只有系统代理)
@@ -83,7 +84,7 @@ sudo nixos-rebuild switch --flake .#mynixos
 ```nix
 programs.flashfox-lite = {
   enable = true;                # 启用
-  enableTun = true;             # TUN 模式(需先做上文的 device 一次性配置)
+  enableTun = true;             # TUN 模式(零手动步骤,详见上文原理)
   package = ...;                # 默认自动(按 enableTun 选布局),可 override 换版本
   enableGsettingsSchema = true; # 系统代理 schema(默认开)
 };
@@ -143,5 +144,5 @@ vendor/          # 官方 deb(51M,版本泛化引用)
 TUN-RESEARCH.md  # TUN 模式完整调研记录(含最终根因与方案)
 ```
 
-CI/本地验证:`nix flake check`(构建两个布局的包)。
+CI/本地验证:`NIXPKGS_ALLOW_UNFREE=1 nix flake check --impure`(构建两种布局的包;闭源需 allowUnfree)。
 

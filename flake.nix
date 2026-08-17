@@ -20,7 +20,6 @@
       mkOptions =
         {
           lib,
-          pkgs,
         }:
         {
           enable = lib.mkEnableOption "闪狐云 Lite";
@@ -74,7 +73,7 @@
           cfg = config.programs.flashfox-lite;
         in
         {
-          options.programs.flashfox-lite = mkOptions { inherit lib pkgs; } // {
+          options.programs.flashfox-lite = mkOptions { inherit lib; } // {
             # 开箱即用,无任何手动步骤:设备名修正由包内包装器自动完成
             # (package.nix 的 flashfox-fix-device,每次启动 GUI 前幂等写入)。
             enableTun = lib.mkEnableOption "TUN 模式(全流量接管)";
@@ -160,7 +159,7 @@
           cfg = config.programs.flashfox-lite;
         in
         {
-          options.programs.flashfox-lite = mkOptions { inherit lib pkgs; };
+          options.programs.flashfox-lite = mkOptions { inherit lib; };
 
           config = lib.mkIf cfg.enable {
             programs.flashfox-lite.package = lib.mkDefault (pkgs.callPackage ./package.nix { });
