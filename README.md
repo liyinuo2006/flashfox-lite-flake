@@ -138,10 +138,10 @@ curl -s -o /dev/null -w '%{http_code}\n' https://www.google.com   # 应 200
 > ⚠ 排障必读(2026-09-10 实战):GUI 的运行时数据在
 > `~/.local/share/com.ffclient.app/`(**不是** `ffclient.app`——3.2.1 起目录迁移,
 > 曾导致设备名修正失效、TUN 状态残留、系统代理 7892 走国外全挂的连环故障,
-> 详见 TUN-RESEARCH.md §17)。开关状态、`tun.device` 都看这个目录的
+> 详见 AGENTS.md)。开关状态、`tun.device` 都看这个目录的
 > `shared_preferences.json`;还有 `system_proxy_active.marker` 标记系统代理激活。
 
-完整调研过程、根因分析与诊断数据见 [TUN-RESEARCH.md](./TUN-RESEARCH.md)。
+机制原理、版本差异、排障命令与历史复盘见 [AGENTS.md](./AGENTS.md)(仓库唯一知识入口)。
 
 ## 升级 deb(3.2.1 起不止改版本号)
 
@@ -163,9 +163,8 @@ flake.nix        # 输出:packages / checks / overlays / nixosModules / homeModu
 package.nix      # 打包定义(autoPatchelfHook 补依赖,wrapProgram 注入 PATH/LD_LIBRARY_PATH/
                  # FRB_DART_LOAD_EXTERNAL_LIBRARY_NATIVE_LIB_DIR/GSETTINGS_SCHEMA_DIR;tunSupport 布局)
 vendor/          # 官方 deb(43M,版本泛化引用)
-AGENTS.md        # 给维护者/agent 的仓库规则(硬性约定、机制、升级流程、坑)
-README.md        # 本文件
-TUN-RESEARCH.md  # TUN/系统代理完整调研记录(§15 最终方案、§17 3.2.1 升级复盘)
+AGENTS.md        # 给维护者/agent 的仓库知识入口(机制/原理/排障/版本史/升级流程)
+README.md        # 本文件(用户向:快速开始/验证/升级步骤)
 ```
 
 CI/本地验证:`NIXPKGS_ALLOW_UNFREE=1 nix flake check --impure`(构建两种布局的包;闭源需 allowUnfree)。
