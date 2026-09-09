@@ -186,10 +186,13 @@ FAKE_SUDO_EOF
     # 替换成下划线,加 ip rule 时却用原始中文名 → 规则 [detached] → 死循环全断网)。
     # 本脚本在 GUI 每次启动前(经 postFixup 的 --run)把 patchClashConfig.tun.device
     # 幂等改为 "Meta",仅在值不同时写文件;文件不存在时静默跳过。
+    # 注意:3.2.1 起数据目录从 ~/.local/share/ffclient.app 迁到
+    # ~/.local/share/com.ffclient.app(desktop 文件 StartupWMClass=com.ffclient.app
+    # 即为线索),写错目录会导致 device 修正永不生效(系统里残留旧接口/路由)。
     echo "#!${stdenv.shell}" > $out/libexec/flashfox-fix-device
     cat >> $out/libexec/flashfox-fix-device <<'FIXDEV_EOF'
 set -e
-prefs="$HOME/.local/share/ffclient.app/shared_preferences.json"
+prefs="$HOME/.local/share/com.ffclient.app/shared_preferences.json"
 [ -f "$prefs" ] || exit 0
 tmp="$prefs.tmp.$$"
 ${jq}/bin/jq 'if (."flutter.config" | type) == "string" then ."flutter.config" |= (fromjson | .patchClashConfig //= {} | .patchClashConfig.tun //= {} | .patchClashConfig.tun.device = "Meta" | tojson) else . end' "$prefs" > "$tmp"
