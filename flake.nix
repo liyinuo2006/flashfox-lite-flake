@@ -142,6 +142,77 @@
               '';
             };
 
+            # 清理闪狐残留 TUN(2026-09-10 实战发现,3.2.1):
+            # 闪狐的 TUN 接口 persist on,GUI 里关 TUN 时 Core 的停用路径不会
+            # 清理内核状态(接口/9000-9010 规则/2022 路由表全部残留)。残留的
+            # 9002 "from 0.0.0.0 iif lo lookup 2022" 会把本地新出站(包括系统
+            # 代理口 7892 的转发)吸进半死 TUN → 系统代理走国外全挂(国内碰巧
+            # 直连兜底),且 Core 被杀也不消失(persist),只能显式删除。
+            # 本服务周期检查并清理,条件严格限定,绝不误删合法 TUN:
+            #   - Core 不在跑 + Meta 存在        → 残留(persist 留着),清理
+            #   - Core 在跑 + GUI tun.enable=false + Meta 存在 → 残留,清理
+            #   - Core 在跑 + tun.enable=true     → 合法 TUN,绝不动
+            # 只删闪狐专用的 9000-9010 优先级段、2022 表与名为 Meta 的接口。
+            systemd.services.flashfox-tun-cleanup = lib.mkIf cfg.enableTun {
+              description = "清理闪狐残留 TUN 状态(接口/规则/路由表)";
+              serviceConfig = {
+                Type = "oneshot";
+              };
+              script = ''
+                set -eu
+                ip=${pkgs.iproute2}/bin/ip
+                pgrep=${pkgs.procps}/bin/pgrep
+                jq=${pkgs.jq}/bin/jq
+                prefs_glob=/home/*/.local/share/com.ffclient.app/shared_preferences.json
+
+                # Meta 不存在 → 无残留,直接退出
+                $ip link show Meta >/dev/null 2>&1 || exit 0
+
+                should_clean=0
+                if $pgrep -f FlashFoxLiteCore.bin >/dev/null 2>&1; then
+                  # Core 在跑:尊重 GUI 配置,任一用户的 tun.enable=false 即视为
+                  # "关了但没清干净";没有配置文件时保守不动(状态未知)。
+                  found=false
+                  for prefs in $prefs_glob; do
+                    [ -f "$prefs" ] || continue
+                    found=true
+                    enable=$($jq -r '(
+                      ."flutter.config" as $fc |
+                      (if ($fc|type)=="string" then $fc|fromjson else $fc end) |
+                      .patchClashConfig.tun.enable // false
+                    )' "$prefs" 2>/dev/null || echo false)
+                    if [ "$enable" = "false" ]; then should_clean=1; fi
+                  done
+                  [ "$found" = "true" ] || exit 0
+                else
+                  # Core 不在跑 → 接口必是残留(persist 不随进程消失)
+                  should_clean=1
+                fi
+
+                [ "$should_clean" = "1" ] || exit 0
+
+                # 清理:只删闪狐规则段/表/接口,全部幂等,不存在则忽略
+                $ip rule del pref 9000 2>/dev/null || true
+                $ip rule del pref 9001 2>/dev/null || true
+                $ip rule del pref 9001 2>/dev/null || true
+                $ip rule del pref 9002 2>/dev/null || true
+                $ip rule del pref 9002 2>/dev/null || true
+                $ip rule del pref 9002 2>/dev/null || true
+                $ip rule del pref 9010 2>/dev/null || true
+                $ip route flush table 2022 2>/dev/null || true
+                $ip link del Meta 2>/dev/null || true
+              '';
+            };
+            systemd.timers.flashfox-tun-cleanup = lib.mkIf cfg.enableTun {
+              description = "周期触发 flashfox-tun-cleanup";
+              wantedBy = [ "timers.target" ];
+              timerConfig = {
+                OnBootSec = "30s";
+                OnUnitActiveSec = "15s";
+                AccuracySec = "1s";
+              };
+            };
+
             # mihomo 的 tun2socks 桥接在 198.18.0.1:<随机端口> 起 TCP 监听,并把
             # 改写后的 SYN 经 TUN 接口送回本机;NixOS 防火墙默认丢弃非信任接口的
             # 入站包 → 握手失败 → TUN 下所有 TCP 全断。必须信任 TUN 接口
