@@ -87,10 +87,13 @@ stdenv.mkDerivation {
     # - xdg-user-dir:path_provider 查询 Downloads/Documents 目录,缺失会导致启动崩溃
     # - tunSupport 时把假 sudo 目录放在 PATH 最前(见 installPhase 说明)
     # - LD_LIBRARY_PATH 暴露 libsecret:3.2.1 起 flutter_secure_storage 经 dlopen
-    #   打开 libsecret-1.so.0(无 NEEDED 引用),不暴露则订阅口令等存取失败
+    #   打开 libsecret-1.so.0(无 NEEDED 引用),不暴露则订阅口令等存取失败。
+    #   $out/share/FlashFoxLite/lib:3.2.1 起 Rust 桥 librust_api.so 经
+    #   dlopen("librust_api.so") 裸名加载(flutter_rust_bridge),无 NEEDED 引用、
+    #   autoPatchelf RUNPATH 覆盖不到 → 必须经 LD_LIBRARY_PATH 显式提供。
     wrapProgram $out/bin/flashfox-lite \
       --prefix PATH : ${glib.bin}/bin:${xdg-user-dirs}/bin \
-      --prefix LD_LIBRARY_PATH : ${libsecret}/lib \
+      --prefix LD_LIBRARY_PATH : ${libsecret}/lib:$out/share/FlashFoxLite/lib \
       ${lib.optionalString tunSupport "--prefix PATH : $out/libexec/flashfox-fake-sudo"} \
       ${lib.optionalString tunSupport "--run $out/libexec/flashfox-fix-device"}
   '';
