@@ -1101,6 +1101,7 @@ clash-verge 在 NixOS 上 TUN 正常,因为:
 ---
 
 **前文结束。TUN 已于 2026-08-18 彻底解决,最终根因与方案见第 15 节(以第 15 节为准)。**
+**3.2.1 升级(2026-09)详见第 16-17 节:第 16 节是静态差异,第 17 节是运行时验证与实战复盘(以第 17 节为准)。**
 ---
 
 ## 15. 最终解决方案(2026-08-18,TUN 全功能验证通过)
@@ -1182,7 +1183,7 @@ enableTun = true 时:
 ## 16. 3.2.1 升级记录(2026-09-09,3.0.6 → 3.2.1)
 
 > 前文 §1–§15 均为 3.0.6 时代的原始记录,保留不动。本节只记录 3.2.1 的静态
-> 差异与 package.nix 的对应修改,结论以运行时验证为准。
+> 差异与 package.nix 的对应修改。**运行时验证结果、真凶复盘与最终结论见 §17。**
 
 ### 16.1 版本元数据
 
@@ -1236,6 +1237,123 @@ enableTun = true 时:
 3. mixed-port 是否仍是 7892(决定防火墙/代理验证命令)
 4. 开 TUN 免密、`Meta`接口、`ip rule`无 detached、baidu/google/fake-ip 全通
 5. 订阅登录态持久化(libsecret 路径)、托盘、WiFi 相关功能无崩溃
+
+---
+
+## 17. 3.2.1 运行时验证与实战复盘(2026-09-10,以本节为准)
+
+> §16.6 的待验证项全部实测完毕;期间发现并修复了一个"数据目录迁移"连环
+> 故障(§17.2),以及两个 nixpkgs 生态适配点(§17.3-17.4)。**本节是对 3.2.1
+> 时代的最终裁决,与 §15 对 3.0.6 的裁决同等效力。**
+
+### 17.1 §16.6 逐项裁决(全部通过)
+
+1. **TUN 设备名仍是中文**「闪狐云_Lite」→ fix-device 仍必须(但路径要指向
+   新数据目录,见 §17.2;修复后 device 稳定为 `Meta`)
+2. `patchClashConfig` 结构未变:`flutter.config` 仍是内嵌 JSON 字符串,
+   tun 含 `enable/device/auto-route:false/stack:mixed/dns-hijack:["any:53"]`,
+   fix-device 的 jq 变换仍然适用
+3. **mixed-port 仍是 7892**,gsettings 写 `http/https 127.0.0.1:7892` 不变
+4. 开 TUN 免密(实测开关无密码框)、`Meta` 接口、`ip rule` 无 detached、
+   TUN 直连 baidu/google 均 200/302 ✓
+5. 订阅/节点加载正常(节点列表齐全,香港/日本/新加坡/美国/泰国/土耳其…)、
+   托盘正常、WiFi 插件无崩溃 ✓
+
+### 17.2 真凶:3.2.1 运行时数据目录迁移(ffclient.app → com.ffclient.app)
+
+**这是本次升级唯一的隐藏 breaking change,引发的连环故障排查了数小时。**
+
+现象链(用户视角):
+- GUI 里"关 TUN"后系统仍残留 `Meta` 接口、`iif Meta` 规则、2022 路由表
+- 只开系统代理时,7892 走国外全挂(google/youtube/github/1.1.1.1 全 000/502),
+  国内(baidu)正常;同一时刻 TUN 直连 google 却 200(节点明明可用)
+- GUI↔Core 的 `getTraffic` 一直返回 false、`getProxies` 返回 null;
+  `shared_preferences.json` 时间戳一小时不更新(GUI 操作似乎不落盘)
+
+排查过程关键发现:
+- GUI 进程打开的数据库 fd 指向 `~/.local/share/com.ffclient.app/database.sqlite`
+  ——**不是**我们一直盯着的 `ffclient.app`!前者是 3.2.1 新目录(desktop 文件
+  的 `StartupWMClass=com.ffclient.app` 早已暗示 app id 迁移)
+- 新目录 `com.ffclient.app/shared_preferences.json` 才是 GUI 真实状态:
+  23:55 还在更新(用户操作一直正常落盘!)、`tun.device=闪狐云_Lite`(中文,
+  从未被修正)、`system_proxy_active.marker=1`
+- 老目录 `ffclient.app`(3.0.6 时代)里 device=Meta,是 fix-device 写的,
+  但 **3.2.1 根本不读老目录** → 修正无效
+
+根因:
+`package.nix` 的 `flashfox-fix-device` 写死 `$HOME/.local/share/ffclient.app/...`
+(3.0.6 路径),而 3.2.1 实际用 `com.ffclient.app`。后果:
+- 新目录 device 恒为中文 → GUI 开关状态与 Core 实际 TUN 状态脱节;
+- 升级过渡期新旧目录配置混杂 → 系统出现半死的残留 TUN(接口/规则/路由表),
+  把走 7892 的出站流量吸走 → 系统代理国外全挂、国内碰巧直连兜底;
+- GUI 轮询方法返回 false/null 是此混乱状态的次生现象。
+
+修复:
+- `5edfddb`:fix-device 路径改为 `com.ffclient.app`(此后 GUI 每次启动先把
+  device 幂等写 Meta,再启 Core,两侧一致)
+- 一次性清理残留:`pkill FlashFoxLiteCore.bin` + 删 9000-9010 ip rule +
+  flush table 2022 + `ip link del Meta`
+- 验证:清理后单开系统代理 7892 走 google 302/youtube 200;再开 TUN 双模式
+  并存仍全部正常 → **§15.3"两模式互不干扰"在 3.2.1 同样成立,且可同时开启**
+
+教训:
+- 升级闭源 Flutter 客户端,**先查运行时数据目录是否随 app id 迁移**
+  (desktop 文件的 `StartupWMClass`、`~/.local/share/` 下新目录是线索);
+- 排查 GUI 状态一律以 GUI 进程实际打开的 fd 路径为准,不要凭旧文档;
+- fix-device 这类"启动前改用户配置"的脚本,升级时必须核对目录。
+
+### 17.3 适配点:nixpkgs gsettings schema 目录迁移
+
+- 现象:闪狐「系统代理」开关调 `gsettings set org.gnome.system.proxy` 静默失败,
+  `gsettings get` 报"没有安装架构";系统里 gsettings-desktop-schemas 明明装了
+- 根因:2026-09 nixpkgs 的 glib setup-hook 把 schema 从
+  `share/glib-2.0/schemas` 迁到 `share/gsettings-schemas/<pkg>/glib-2.0/schemas`
+  (glib-2.88 新机制,`gsettings-schemas` 下的 `glib-2.0/schemas` 为空壳);
+  `gsettings` CLI 只在 `GSETTINGS_SCHEMA_DIR` 指向最终 schemas 目录、
+  或 `XDG_DATA_DIRS` 含 `share/gsettings-schemas/<pkg>` 时才读得到
+- 实测对照:`GSETTINGS_SCHEMA_DIR=<最终 schemas 目录>` → get='manual'/set OK;
+  仅装包不注入 → 找不到架构
+- 修复(`77c1290`):package.nix 把 `gsettings-desktop-schemas` 加进 buildInputs,
+  let 块用 `.name` 拼出最终目录,postFixup 里 `--set GSETTINGS_SCHEMA_DIR`
+  (注意 --set 会覆盖环境已有值,闪狐只依赖 org.gnome.system.proxy,可接受;
+  模块的 enableGsettingsSchema 降级为"系统级额外安装",不再承担 GUI 侧保障)
+- 验证:注入后 gsettings 可读可写,系统代理配置完整落 gsettings
+  (mode=manual,http/https=127.0.0.1:7892)
+
+### 17.4 适配点:librust_api.so(flutter_rust_bridge)裸名加载
+
+- 现象:3.2.1 GUI 启动即崩:`Failed to load dynamic library 'librust_api.so'`
+  (3.0.6 无此库,对应旧的 libflutter_js_plugin 被 Rust 桥取代)
+- 机制:flutter_rust_bridge 在 Linux 按"可执行文件相对目录"找库并 `open` 全
+  路径;裸名 `dlopen` 不可靠——`LD_LIBRARY_PATH` 不一定命中,实测第一次加
+  LD_LIBRARY_PATH 仍崩
+- 修复(`ddabd30`):wrapper 注入官方覆盖点
+  `FRB_DART_LOAD_EXTERNAL_LIBRARY_NATIVE_LIB_DIR=<bundle>/lib`
+  → FRB 直接 open 全路径,确定性加载
+- 同批适配:libsecret(3.2.1 deb 新增 Depends,无 NEEDED、dlopen 用)走
+  LD_LIBRARY_PATH(`90ace01` 起)
+
+### 17.5 老验证命令修正(3.2.1 起)
+
+- 旧命令 `stat .../run/current-system/sw/share/FlashFoxLite/FlashFoxLiteCore`
+  已失效(该路径 3.2.1 不存在);用 store 路径:
+  `stat -c '%U:%G %A' "$(readlink -f /run/current-system/sw/bin/flashfox-lite | xargs dirname | xargs dirname)/share/FlashFoxLite/FlashFoxLiteCore"`
+  应输出 `root:root -rws--x--x`
+- 运行时数据目录看 `~/.local/share/com.ffclient.app/`(不是 ffclient.app)
+
+### 17.6 3.2.1 升级最终结论
+
+| 项 | 结论 |
+|---|---|
+| deb 换包 + /opt bundle 迁移 | ✓(package.nix installPhase) |
+| librust_api.so 加载 | ✓(FRB env var,§17.4) |
+| libsecret 凭据库 | ✓(LD_LIBRARY_PATH) |
+| 系统代理 schema | ✓(GSETTINGS_SCHEMA_DIR,§17.3) |
+| fix-device 数据目录 | ✓(com.ffclient.app,§17.2) |
+| TUN 四件套(wrapper/bind-mount/假 sudo/fix-device) | ✓ 原样有效 |
+| 系统代理单独 | ✓ google 302/youtube 200 |
+| TUN 单独 | ✓ google/baidu 200 |
+| **TUN + 系统代理同时** | ✓ 均正常(清理残留后) |
 
 ---
 

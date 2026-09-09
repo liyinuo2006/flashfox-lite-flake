@@ -98,23 +98,26 @@ stdenv.mkDerivation {
   '';
 
   postFixup = ''
-    # 运行时需要的外部命令:
-    # - gsettings:设置系统代理(NixOS 无此命令)
-    # - xdg-user-dir:path_provider 查询 Downloads/Documents 目录,缺失会导致启动崩溃
-    # - tunSupport 时把假 sudo 目录放在 PATH 最前(见 installPhase 说明)
-    # - LD_LIBRARY_PATH 暴露 libsecret + bundle lib:3.2.1 起订阅口令等经
-    #   librust_api.so(Rust 桥)dlopen("libsecret-1.so.0") 与
-    #   dlopen("librust_api.so") 裸名加载,无 NEEDED 引用、autoPatchelf RUNPATH
-    #   覆盖不到 → 必须经 LD_LIBRARY_PATH 显式提供。
-    # - FRB_DART_LOAD_EXTERNAL_LIBRARY_NATIVE_LIB_DIR:flutter_rust_bridge 在
-    #   Linux 上按"可执行文件相对目录"找 librust_api.so 并 open 全路径,裸名
-    #   dlopen 不可靠(LD_LIBRARY_PATH 不一定命中)。该环境变量是其官方覆盖点,
-    #   设为 bundle 的 lib/ 目录即可确定性加载,重启 GUI 即生效。
-    # - GSETTINGS_SCHEMA_DIR:gsettings CLI 只认该单目录(指向 schema 最终目录)。
-    #   当前 nixpkgs 的 gsettings-desktop-schemas 把 schema 放
-    #   share/gsettings-schemas/<pkg>/glib-2.0/schemas(旧的 share/glib-2.0/schemas
-    #   已空),不注入则闪狐调 gsettings set org.gnome.system.proxy 报"没有安装架构"
-    #   静默失败 → 系统代理开关无效。GSETTINGS_SCHEMA_DIR 在构建期由 let 块拼出。
+    # 运行时需要的外部命令与库(职责划分,勿随意删减):
+    # - PATH + glib.bin:gsettings 命令(设置系统代理;NixOS 系统 PATH 无此命令)
+    # - PATH + xdg-user-dirs:xdg-user-dir(path_provider 查 Downloads 等目录,
+    #   缺失导致启动崩溃)
+    # - PATH + 假 sudo(tunSupport):吞掉针对 FlashFoxLiteCore 的 chown/chmod
+    # - LD_LIBRARY_PATH:两个无 NEEDED 引用、靠 dlopen 裸名加载的库:
+    #   libsecret(3.2.1 deb 新增 Depends,订阅凭据存储经 Rust 桥 dlopen)与
+    #   bundle lib/ 目录(librust_api.so 等裸名 dlopen 的兜底搜索路径)
+    # - FRB_DART_LOAD_EXTERNAL_LIBRARY_NATIVE_LIB_DIR:librust_api.so 的
+    #   flutter_rust_bridge 官方覆盖点。FRB 在 Linux 上默认按"可执行文件相对
+    #   目录"找库并 open 全路径,裸名 dlopen(LD_LIBRARY_PATH)并不可靠——
+    #   实测不设此变量 GUI 启动即报 Failed to load dynamic library。
+    #   设为 bundle 的 lib/ 目录即确定性加载。
+    # - GSETTINGS_SCHEMA_DIR:gsettings CLI 认的单目录(schema 最终目录)。
+    #   2026-09 nixpkgs 起 gsettings-desktop-schemas 的 schema 从
+    #   share/glib-2.0/schemas 迁到 share/gsettings-schemas/<pkg>/glib-2.0/schemas,
+    #   不注入则闪狐 set org.gnome.system.proxy 报"没有安装架构"而静默失败
+    #   → 系统代理开关无效。目录在 let 块用包 .name 构建期拼出。
+    #   注意 --set 会覆盖环境已有值:闪狐只依赖 org.gnome.system.proxy,
+    #   其它 schema 由各程序自身环境提供,故可接受。
     wrapProgram $out/bin/flashfox-lite \
       --prefix PATH : ${glib.bin}/bin:${xdg-user-dirs}/bin \
       --prefix LD_LIBRARY_PATH : ${libsecret}/lib:$out/share/FlashFoxLite/lib \
@@ -186,9 +189,11 @@ FAKE_SUDO_EOF
     # 替换成下划线,加 ip rule 时却用原始中文名 → 规则 [detached] → 死循环全断网)。
     # 本脚本在 GUI 每次启动前(经 postFixup 的 --run)把 patchClashConfig.tun.device
     # 幂等改为 "Meta",仅在值不同时写文件;文件不存在时静默跳过。
-    # 注意:3.2.1 起数据目录从 ~/.local/share/ffclient.app 迁到
-    # ~/.local/share/com.ffclient.app(desktop 文件 StartupWMClass=com.ffclient.app
-    # 即为线索),写错目录会导致 device 修正永不生效(系统里残留旧接口/路由)。
+    # ⚠ 数据目录:3.2.1 起从 ~/.local/share/ffclient.app 迁到
+    # ~/.local/share/com.ffclient.app(线索:desktop 的 StartupWMClass=com.ffclient.app)。
+    # 写错目录 = device 修正永不生效:新目录 device 保持中文、而旧目录里被改成
+    # Meta 的配置又不被 3.2.1 读取 → GUI 开关与系统实际 TUN 状态脱节,残留
+    # Meta 接口/2022 路由表导致系统代理 7892 走国外全挂(2026-09-10 实战复盘)。
     echo "#!${stdenv.shell}" > $out/libexec/flashfox-fix-device
     cat >> $out/libexec/flashfox-fix-device <<'FIXDEV_EOF'
 set -e

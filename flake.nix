@@ -29,12 +29,18 @@
             description = "闪狐云 Lite 包。默认自动(按 enableTun 选择布局),可 override 换版本。";
           };
 
-          # 闪狐用 gsettings 设置系统代理(org.gnome.system.proxy);
-          # NixOS 默认缺该 schema,不装则代理设置静默失败,浏览器不走代理。
+          # 闪狐用 gsettings 设置系统代理(org.gnome.system.proxy)。
+          # 注意(2026-09,3.2.1 + 新版 nixpkgs):schema 目录已从
+          # share/glib-2.0/schemas 迁到 share/gsettings-schemas/<pkg>/glib-2.0/schemas,
+          # 光把这个包加进 systemPackages 已不足以让 gsettings CLI 读到
+          # (旧版单纯装包即生效,现已失效)。闪狐 GUI 读 schema 的真正保障是
+          # package.nix 里 wrapProgram 注入的 GSETTINGS_SCHEMA_DIR(指向包内最终
+          # schemas 目录,构建期拼出);本选项只是额外把 gsettings-desktop-schemas
+          # 装进系统,供其它程序/手动 gsettings 使用,可关。
           enableGsettingsSchema = lib.mkOption {
             type = lib.types.bool;
             default = true;
-            description = "安装 gsettings-desktop-schemas(系统代理必需)";
+            description = "安装 gsettings-desktop-schemas(系统级可用;闪狐自身依赖包内 GSETTINGS_SCHEMA_DIR 注入,见 package.nix)";
           };
         };
     in
