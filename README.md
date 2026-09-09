@@ -140,7 +140,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://www.google.com   # 应 200
 ```
 flake.nix        # 输出:packages / checks / overlays / nixosModules / homeModules / formatter
 package.nix      # 打包定义(autoPatchelfHook 补依赖,wrapProgram 加 PATH;tunSupport 布局)
-vendor/          # 官方 deb(51M,版本泛化引用)
+vendor/          # 官方 deb(43M,版本泛化引用)
 TUN-RESEARCH.md  # TUN 模式完整调研记录(含最终根因与方案)
 ```
 

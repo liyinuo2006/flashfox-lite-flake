@@ -1179,3 +1179,63 @@ enableTun = true 时:
 
 ---
 
+## 16. 3.2.1 升级记录(2026-09-09,3.0.6 → 3.2.1)
+
+> 前文 §1–§15 均为 3.0.6 时代的原始记录,保留不动。本节只记录 3.2.1 的静态
+> 差异与 package.nix 的对应修改,结论以运行时验证为准。
+
+### 16.1 版本元数据
+
+- deb:`FlashFoxLite-3.0.6-linux-amd64.deb`(51M)→`FlashFoxLite-3.2.1-linux-amd64.deb`(43M)
+- control:`Version 3.0.6+2026052319`→`3.2.1+2026090313`;
+  Maintainer`chen08209`→`shenshen`(来源已由用户确认为可信);
+  Depends 新增`libsecret-1-0`(另两项不变)
+- `version.json` 的`app_name`仍是`fl_clash`(FlClash fork 身份未变)
+
+### 16.2 打包 breaking change:bundle 搬家
+
+- deb 内 bundle 路径:`./usr/share/FlashFoxLite`→`./opt/FlashFoxLite`;
+  desktop/图标仍在`./usr/share`下,postinst 软链同步改为`/opt/...`
+- package.nix:installPhase 改为`cp -r $sourceRoot/opt/FlashFoxLite`,
+  desktop 的`substituteInPlace`(Exec=FlashFoxLite)不受影响
+  (新 desktop 仅删`Version=`、加`StartupWMClass=com.ffclient.app`)
+
+### 16.3 依赖:新增 libsecret
+
+- 全 bundle 无任何 `.so` 直接 NEEDED`libsecret`(readelf 确认),
+  应为 flutter_secure_storage 经 dlopen 打开`libsecret-1.so.0`,
+  autoPatchelf 扫不到 → package.nix 加`libsecret`进 buildInputs,
+  并用`--prefix LD_LIBRARY_PATH`暴露;不加则订阅口令等存取可能失败
+- `libkeybinder`沿旧策略暂不引入(3.0.6 时 Depends 里已有,缺席下运行正常,
+  应为全局热键之类的可选功能)
+
+### 16.4 插件增删(readelf NEEDED 逐个确认,无新增系统依赖)
+
+- 删`libflutter_js_plugin.so`(JS 桥疑似被`librust_api.so`取代;后者仅需 libc/libm)
+- `libtray_manager_plugin.so`→`libtray_plugin.so`(改名,ayatana 四件套依赖不变)
+- `libsqlite3_flutter_libs_plugin.so`→`libsqlite3.so`(退化为纯 sqlite3,仅需 libc)
+- 新增`libwifi_ssid_plugin.so`(仅 GTK 栈依赖,应走 NetworkManager D-Bus,
+  Niri 下需实测是否崩溃)
+- `libflutter_linux_gtk.so` 42M→17M,`libapp.so` 14M→18M(引擎拆分/业务增长,
+  打包侧无影响);`libdartjni.so`仍需`libjvm.so`(preFixup 补路径保留)
+- 资源:删`map_tiles/`离线地图(体积下降主因);GEOIP/GEOSITE/ASN.mmdb 改为
+  打进`flutter_assets/assets/data/`,加字体/多色图标/`stretch_effect.frag`
+
+### 16.5 Core:35M → 61M(静态 Go,无需补依赖,但 TUN 行为必须重测)
+
+- `go version -m`:Go 1.24.0→1.26.5;sing-tun v0.4.17→v0.4.22;
+  新增 tailscale/shadowquic 等依赖(疑似上游 mihomo 大版本跟进)
+- GUI 提权协议字符串未变(`sudo`/`chown root:root`/`&& chmod +sx`/
+  `FlashFoxLiteCore`均在),故 §15 的wrapper+bind-mount+假 sudo+fix-device
+  四件套原样保留,未认定任何旧配置过时
+
+### 16.6 待运行时验证(静态看不到,逐项实测)
+
+1. 默认 TUN 设备名是否仍是中文(决定 fix-device 脚本是否仍命中)
+2. `patchClashConfig`结构/`flutter.config`内嵌 JSON 格式是否变化
+3. mixed-port 是否仍是 7892(决定防火墙/代理验证命令)
+4. 开 TUN 免密、`Meta`接口、`ip rule`无 detached、baidu/google/fake-ip 全通
+5. 订阅登录态持久化(libsecret 路径)、托盘、WiFi 相关功能无崩溃
+
+---
+

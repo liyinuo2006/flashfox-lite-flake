@@ -13,6 +13,10 @@
   libayatana-indicator,
   ayatana-ido,
   libdbusmenu,
+  # libsecret-1.so 供 flutter_secure_storage 经 dlopen 加载(无 NEEDED 引用,
+  # autoPatchelf 扫不到,靠 postFixup 的 LD_LIBRARY_PATH 暴露);3.2.1 的 deb
+  # 新增 Depends libsecret-1-0,旧版无此依赖。
+  libsecret,
   jdk,
   xdg-user-dirs,
   # TUN 布局:true 时 core 改名 .bin,core 原路径放跳板脚本,给 GUI 注入假 sudo,
@@ -24,13 +28,13 @@
 }:
 
 let
-  version = "3.0.6";
+  version = "3.2.1";
 in
 stdenv.mkDerivation {
   pname = "flashfox-lite";
   inherit version;
 
-  # 闭源 deb 直接 vendor 进仓库(51M);升级时替换 vendor/ 里的 deb 并改上面的 version
+  # 闭源 deb 直接 vendor 进仓库(43M);升级时替换 vendor/ 里的 deb 并改上面的 version
   src = ./vendor/FlashFoxLite-${version}-linux-amd64.deb;
 
   nativeBuildInputs = [
@@ -46,11 +50,12 @@ stdenv.mkDerivation {
     glib
     libepoxy
     fontconfig
-    # 系统托盘(libtray_manager_plugin.so)
+    # 系统托盘(libtray_plugin.so;3.2.1 起由 libtray_manager_plugin.so 改名,依赖不变)
     libayatana-appindicator
     libayatana-indicator
     ayatana-ido
     libdbusmenu
+    libsecret
     # libdartjni.so 需要 libjvm.so(搜索路径在 preFixup 里补)
     jdk
     # 启动前修补设备名脚本的依赖(仅 tunSupport 时被引用,进入运行时闭包)
@@ -81,8 +86,11 @@ stdenv.mkDerivation {
     # - gsettings:设置系统代理(NixOS 无此命令)
     # - xdg-user-dir:path_provider 查询 Downloads/Documents 目录,缺失会导致启动崩溃
     # - tunSupport 时把假 sudo 目录放在 PATH 最前(见 installPhase 说明)
+    # - LD_LIBRARY_PATH 暴露 libsecret:3.2.1 起 flutter_secure_storage 经 dlopen
+    #   打开 libsecret-1.so.0(无 NEEDED 引用),不暴露则订阅口令等存取失败
     wrapProgram $out/bin/flashfox-lite \
       --prefix PATH : ${glib.bin}/bin:${xdg-user-dirs}/bin \
+      --prefix LD_LIBRARY_PATH : ${libsecret}/lib \
       ${lib.optionalString tunSupport "--prefix PATH : $out/libexec/flashfox-fake-sudo"} \
       ${lib.optionalString tunSupport "--run $out/libexec/flashfox-fix-device"}
   '';
@@ -90,7 +98,10 @@ stdenv.mkDerivation {
   installPhase = ''
     runHook preInstall
     mkdir -p $out/bin $out/share
-    cp -r $sourceRoot/usr/share/FlashFoxLite $out/share/
+    # 3.2.1 起 deb 把 bundle 从 usr/share/FlashFoxLite 搬到 opt/FlashFoxLite
+    # (postinst 软链与 desktop 图标仍在 usr/share 下,下面两行不动);
+    # src 文件名保持 FlashFoxLite-${version}-linux-amd64.deb 泛化引用。
+    cp -r $sourceRoot/opt/FlashFoxLite $out/share/
     cp -r $sourceRoot/usr/share/applications $out/share/
     cp -r $sourceRoot/usr/share/icons $out/share/
     ln -s $out/share/FlashFoxLite/FlashFoxLite $out/bin/flashfox-lite
