@@ -17,6 +17,13 @@
   # autoPatchelf 扫不到,靠 postFixup 的 LD_LIBRARY_PATH 暴露);3.2.1 的 deb
   # 新增 Depends libsecret-1-0,旧版无此依赖。
   libsecret,
+  # 系统代理:闪狐调 gsettings set org.gnome.system.proxy 设置系统代理。
+  # 当前 nixpkgs 把 gsettings-desktop-schemas 的 schema 迁到
+  # share/gsettings-schemas/<pkg>/glib-2.0/schemas,且 gsettings CLI 只在
+  # GSETTINGS_SCHEMA_DIR 指向该最终目录(或经 GSETTINGS_SCHEMAS_PATH 传播进
+  # XDG_DATA_DIRS)时才读得到;旧版单纯加进 systemPackages 已失效。
+  # 这里把它加进 buildInputs 使其进入闭包,并在 postFixup 显式注入其 schema 目录。
+  gsettings-desktop-schemas,
   jdk,
   xdg-user-dirs,
   # TUN 布局:true 时 core 改名 .bin,core 原路径放跳板脚本,给 GUI 注入假 sudo,
@@ -29,6 +36,12 @@
 
 let
   version = "3.2.1";
+
+  # 当前 nixpkgs 的 gsettings-desktop-schemas 把 schema 放在
+  # share/gsettings-schemas/<包名>/glib-2.0/schemas(旧 share/glib-2.0/schemas 已空),
+  # gsettings CLI 只有 GSETTINGS_SCHEMA_DIR 指向该最终目录才读得到
+  # org.gnome.system.proxy 等 schema. 用 .name 拼出该目录,传给 wrapper.
+  GSETTINGS_SCHEMA_DIR = "${gsettings-desktop-schemas}/share/gsettings-schemas/${gsettings-desktop-schemas.name}/glib-2.0/schemas";
 in
 stdenv.mkDerivation {
   pname = "flashfox-lite";
@@ -56,6 +69,9 @@ stdenv.mkDerivation {
     ayatana-ido
     libdbusmenu
     libsecret
+    # gsettings-desktop-schemas 进 buildInputs,使 WrapGAppsHook3 经
+    # GSETTINGS_SCHEMAS_PATH → XDG_DATA_DIRS 传播其 schema 目录(见函数参数注释)
+    gsettings-desktop-schemas
     # libdartjni.so 需要 libjvm.so(搜索路径在 preFixup 里补)
     jdk
     # 启动前修补设备名脚本的依赖(仅 tunSupport 时被引用,进入运行时闭包)
@@ -94,10 +110,16 @@ stdenv.mkDerivation {
     #   Linux 上按"可执行文件相对目录"找 librust_api.so 并 open 全路径,裸名
     #   dlopen 不可靠(LD_LIBRARY_PATH 不一定命中)。该环境变量是其官方覆盖点,
     #   设为 bundle 的 lib/ 目录即可确定性加载,重启 GUI 即生效。
+    # - GSETTINGS_SCHEMA_DIR:gsettings CLI 只认该单目录(指向 schema 最终目录)。
+    #   当前 nixpkgs 的 gsettings-desktop-schemas 把 schema 放
+    #   share/gsettings-schemas/<pkg>/glib-2.0/schemas(旧的 share/glib-2.0/schemas
+    #   已空),不注入则闪狐调 gsettings set org.gnome.system.proxy 报"没有安装架构"
+    #   静默失败 → 系统代理开关无效。GSETTINGS_SCHEMA_DIR 在构建期由 let 块拼出。
     wrapProgram $out/bin/flashfox-lite \
       --prefix PATH : ${glib.bin}/bin:${xdg-user-dirs}/bin \
       --prefix LD_LIBRARY_PATH : ${libsecret}/lib:$out/share/FlashFoxLite/lib \
       --set FRB_DART_LOAD_EXTERNAL_LIBRARY_NATIVE_LIB_DIR "$out/share/FlashFoxLite/lib" \
+      --set GSETTINGS_SCHEMA_DIR "${GSETTINGS_SCHEMA_DIR}" \
       ${lib.optionalString tunSupport "--prefix PATH : $out/libexec/flashfox-fake-sudo"} \
       ${lib.optionalString tunSupport "--run $out/libexec/flashfox-fix-device"}
   '';
