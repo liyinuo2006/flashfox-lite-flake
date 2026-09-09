@@ -178,9 +178,16 @@ sudo ip rule del pref 9010; sudo ip route flush table 2022; sudo ip link del Met
 ## 实测过的行为基线（3.2.1,2026-09-10）
 
 - TUN 直连 google/baidu 200/302;7892 走 google 302/youtube 200/baidu 200
-- 系统代理与 TUN **可同时开,互不干扰**（前提:无残留 TUN 状态）
+- 系统代理与 TUN 可同时开（TUN 全接管时 7892 代理口出站会被 TUN 规则接管,
+  实际以 TUN 为准;分开用各自完全正常）
+- **正常关 TUN 闪狐会自清理**（接口 persist off 随 Core 关 fd 自动消失,
+  9000-9010 规则/2022 表同步清除,已实测）——不需要手动干预
+- **残留只发生在 Core 被异常杀死时**（GUI 崩溃/强杀/升级切换）:内核不回收
+  用户态 ip rule/路由表 → 残留有粘性(新 Core 不清别人的残留) → 系统代理
+  7892 走国外全挂。模块的 flashfox-tun-cleanup 服务(15s 周期)自动清理这类残留
 - Core 以 root 跑（Uid 1000/0/0/0）、Core 路径 `root:root -rws--x--x`、开 TUN 免密
 - TUN 开启时 mihomo 的 dns.listen(1053)不监听、无 iptables REDIRECT 属正常现象
   （DNS 劫持走 TUN 内 `dns-hijack: any:53`）,不是故障
-- 7892 走国外全挂时的排查顺序:①残留 TUN（Meta/2022/9000-9010）→ ②数据目录
-  （GUI 是否真在写 com.ffclient.app）→ ③gsettings schema → ④节点本身
+- 7892 走国外全挂时的排查顺序:①残留 TUN（Meta/2022/9000-9010,等 cleanup
+  服务或手动清）→ ②数据目录（GUI 是否真在写 com.ffclient.app）→ ③gsettings
+  schema → ④节点本身
