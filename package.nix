@@ -86,14 +86,18 @@ stdenv.mkDerivation {
     # - gsettings:设置系统代理(NixOS 无此命令)
     # - xdg-user-dir:path_provider 查询 Downloads/Documents 目录,缺失会导致启动崩溃
     # - tunSupport 时把假 sudo 目录放在 PATH 最前(见 installPhase 说明)
-    # - LD_LIBRARY_PATH 暴露 libsecret:3.2.1 起 flutter_secure_storage 经 dlopen
-    #   打开 libsecret-1.so.0(无 NEEDED 引用),不暴露则订阅口令等存取失败。
-    #   $out/share/FlashFoxLite/lib:3.2.1 起 Rust 桥 librust_api.so 经
-    #   dlopen("librust_api.so") 裸名加载(flutter_rust_bridge),无 NEEDED 引用、
-    #   autoPatchelf RUNPATH 覆盖不到 → 必须经 LD_LIBRARY_PATH 显式提供。
+    # - LD_LIBRARY_PATH 暴露 libsecret + bundle lib:3.2.1 起订阅口令等经
+    #   librust_api.so(Rust 桥)dlopen("libsecret-1.so.0") 与
+    #   dlopen("librust_api.so") 裸名加载,无 NEEDED 引用、autoPatchelf RUNPATH
+    #   覆盖不到 → 必须经 LD_LIBRARY_PATH 显式提供。
+    # - FRB_DART_LOAD_EXTERNAL_LIBRARY_NATIVE_LIB_DIR:flutter_rust_bridge 在
+    #   Linux 上按"可执行文件相对目录"找 librust_api.so 并 open 全路径,裸名
+    #   dlopen 不可靠(LD_LIBRARY_PATH 不一定命中)。该环境变量是其官方覆盖点,
+    #   设为 bundle 的 lib/ 目录即可确定性加载,重启 GUI 即生效。
     wrapProgram $out/bin/flashfox-lite \
       --prefix PATH : ${glib.bin}/bin:${xdg-user-dirs}/bin \
       --prefix LD_LIBRARY_PATH : ${libsecret}/lib:$out/share/FlashFoxLite/lib \
+      --set FRB_DART_LOAD_EXTERNAL_LIBRARY_NATIVE_LIB_DIR "$out/share/FlashFoxLite/lib" \
       ${lib.optionalString tunSupport "--prefix PATH : $out/libexec/flashfox-fake-sudo"} \
       ${lib.optionalString tunSupport "--run $out/libexec/flashfox-fix-device"}
   '';
