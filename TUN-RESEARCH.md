@@ -1,13 +1,27 @@
 # 闪狐云 Lite TUN 模式开发研究文档
 
-> 本文档记录了在 NixOS 上为闪狐云 Lite(FlashFoxLite 3.0.6)实现 TUN 模式的全部尝试、
+> 本文档记录了在 NixOS 上为闪狐云 Lite(FlashFoxLite)实现 TUN 模式的全部尝试、
 > 诊断数据、根因分析、失败方案与成功方案。保留所有原始信息,供未来再次开发 TUN 模式
 > 时参考,避免从零开始。
 >
-> 时间:2026-08-04
-> 环境:NixOS unstable(nixos-unstable),hostname mynixos,VMware 虚拟机 NAT 网络
-> 桌面:niri(Wayland),网卡 ens33(192.168.80.131/24,网关 192.168.80.2)
+> 时间:2026-08-04(3.0.6 调研开始);2026-09-10(3.2.1 升级复盘)
+> 环境:NixOS unstable(nixos-unstable),hostname mynixos,桌面 niri(Wayland)
 > 用户:orion(uid 1000),sudo 可用(需密码)
+
+## 阅读导航(重要,先读这里)
+
+本文档按时间线堆积,前文很多结论已被后续实测推翻。**按版本查阅,别按顺序从头读:**
+
+- **3.2.1(现役)**:直接看 §16(静态差异)+ §17(运行时验证/真凶复盘/最终结论)。
+  3.2.1 的关键变更:**运行时数据目录迁到 `~/.local/share/com.ffclient.app/`**
+  (曾引发系统代理失效的连环故障,§17.2),nixpkgs gsettings schema 目录迁移
+  (§17.3),librust_api.so 加载(§17.4)。
+- **3.0.6(历史,已被 3.2.1 取代)**:§15 是最终裁决(接口名 bug 真凶、防火墙真凶、
+  免密三层方案);§15 之前的 §4-§14 是探索过程,含大量**已被推翻的假设**
+  (如 §4.1"内核替换非 ASCII 字节"、§6"降级运行假说"、§7 systemd 轮询 daemon、
+  §8"系统代理方案"的旧 schema 装法),只作历史参考。
+- 数据目录:3.0.6 用 `~/.local/share/ffclient.app/`(历史),3.2.1 用
+  `~/.local/share/com.ffclient.app/`(现役),别混用。
 
 ---
 
@@ -24,7 +38,7 @@
 GUI 和 Core 通过 **Unix socket** 通信:`/tmp/FlashFoxLiteSocket_XXXX.sock`(XXXX 随机)
 Core 监听 **混合代理端口 127.0.0.1:7892**(HTTP/SOCKS5 合一),处理流量分流/代理。
 
-### 1.2 用户数据目录
+### 1.2 用户数据目录(3.0.6 时代;3.2.1 已迁到 com.ffclient.app,见 §17.2)
 
 所有运行时数据在 `~/.local/share/ffclient.app/`:
 
@@ -759,6 +773,11 @@ $ gsettings get org.gnome.system.proxy mode
 'manual'                                        # ✓
 ```
 
+> ⚠ 此修法仅对 3.0.6 时代的 nixpkgs 有效。2026-09 起 nixpkgs 把 schema 目录迁到
+> `share/gsettings-schemas/<pkg>/glib-2.0/schemas`,单纯装包已不足以让 gsettings
+> 读到(实测"没有安装架构")。3.2.1 的正确做法见 §17.3:包内 wrapper 注入
+> `GSETTINGS_SCHEMA_DIR` 指向最终 schemas 目录。
+
 闪狐开代理时设置系统代理 → Chrome 走 127.0.0.1:7892 → 翻墙。
 
 ### 8.3 验证
@@ -989,9 +1008,9 @@ ps aux | grep nscd | grep -v grep
 # 闪狐 sudo 提权命令(journalctl)
 journalctl -t sudo --since "30 min ago" | grep FlashFoxLiteCore
 
-# 配置文件
-cat ~/.local/share/ffclient.app/shared_preferences.json | tr ',' '\n' | grep -E 'dns|tun|fake|auto-route'
-ls -la ~/.local/share/ffclient.app/config.yaml  # 加密,看不了内容只能看时间戳
+# 配置文件(注意:3.2.1 起数据目录是 com.ffclient.app,不是 ffclient.app)
+cat ~/.local/share/com.ffclient.app/shared_preferences.json | tr ',' '\n' | grep -E 'dns|tun|fake|auto-route'
+ls -la ~/.local/share/com.ffclient.app/config.yaml  # 加密,看不了内容只能看时间戳
 
 # 临时手动补规则(测试用)
 sudo ip rule add iif __________Lite lookup main pref 8900
@@ -1085,14 +1104,19 @@ clash-verge 在 NixOS 上 TUN 正常,因为:
 ~/flashfox-lite-flake/                            # 独立 flake 仓库(最终版)
 ├── flake.nix
 ├── package.nix
+├── AGENTS.md                                     # 仓库规则(硬性约定/机制/升级流程)
 ├── vendor/FlashFoxLite-...deb
 ├── README.md
 └── TUN-RESEARCH.md                                # 本文档
 
-~/.local/share/ffclient.app/                      # 闪狐运行时数据
+# 闪狐运行时数据
+# 3.0.6: ~/.local/share/ffclient.app/(历史,已不被 3.2.1 读取)
+# 3.2.1: ~/.local/share/com.ffclient.app/          ← 现役!
+~/.local/share/com.ffclient.app/
 ├── config.yaml              # 加密
-├── profiles/999999.yaml     # 订阅(加密)
-└── shared_preferences.json  # 明文配置
+├── profiles/*.dat           # 订阅(加密,3.2.1 起 .dat 扩展名)
+├── shared_preferences.json  # 明文配置(含 flutter.config/patchClashConfig)
+└── system_proxy_active.marker  # 系统代理激活标记
 
 /tmp/opencode/tun-diag*.txt                        # 诊断脚本输出(临时)
 /tmp/opencode/tun-diag*.sh                        # 诊断脚本(临时)
