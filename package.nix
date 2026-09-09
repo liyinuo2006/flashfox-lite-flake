@@ -13,9 +13,9 @@
   libayatana-indicator,
   ayatana-ido,
   libdbusmenu,
-  # libsecret-1.so 供 flutter_secure_storage 经 dlopen 加载(无 NEEDED 引用,
-  # autoPatchelf 扫不到,靠 postFixup 的 LD_LIBRARY_PATH 暴露);3.2.1 的 deb
-  # 新增 Depends libsecret-1-0,旧版无此依赖。
+  # libsecret-1.so:3.2.1 deb 新增 Depends,但全 bundle 无任何 .so NEEDED 它
+  # (readelf 确认)→ 必是 dlopen 加载(经 librust_api.so 或插件,闭源无法确证),
+  # autoPatchelf 扫不到 → 这里进 buildInputs 并靠 postFixup 的 LD_LIBRARY_PATH 暴露。
   libsecret,
   # 系统代理:闪狐调 gsettings set org.gnome.system.proxy 设置系统代理。
   # 当前 nixpkgs 把 gsettings-desktop-schemas 的 schema 迁到
@@ -28,7 +28,7 @@
   xdg-user-dirs,
   # TUN 布局:true 时 core 改名 .bin,core 原路径放跳板脚本,给 GUI 注入假 sudo,
   # 并在每次启动前自动把 TUN 设备名补成 ASCII(见 installPhase 的 tunSupport 分支)。
-  # 完整机制见 installPhase 注释与 flake.nix 的 nixosModules。
+  # 完整机制见 installPhase 注释与 AGENTS.md(TUN 适配一节)。
   tunSupport ? false,
   # 启动前修补 shared_preferences.json 用(仅 tunSupport 时进入运行时闭包)
   jq,
@@ -40,7 +40,8 @@ let
   # 当前 nixpkgs 的 gsettings-desktop-schemas 把 schema 放在
   # share/gsettings-schemas/<包名>/glib-2.0/schemas(旧 share/glib-2.0/schemas 已空),
   # gsettings CLI 只有 GSETTINGS_SCHEMA_DIR 指向该最终目录才读得到
-  # org.gnome.system.proxy 等 schema. 用 .name 拼出该目录,传给 wrapper.
+  # org.gnome.system.proxy 等 schema. 用 .name 拼出该目录,传给 wrapper
+  # (.name = pname-version,与目录内嵌名一致;将来包升级版本号自动跟随)。
   GSETTINGS_SCHEMA_DIR = "${gsettings-desktop-schemas}/share/gsettings-schemas/${gsettings-desktop-schemas.name}/glib-2.0/schemas";
 in
 stdenv.mkDerivation {
@@ -98,6 +99,17 @@ stdenv.mkDerivation {
   '';
 
   postFixup = ''
+    # 本包实际有两层 wrapper(fixup 阶段顺序决定,勿改):
+    #   1. wrapGAppsHook3(nativeBuildInputs)先自动 wrap:注入 GIO_EXTRA_MODULES、
+    #      XDG_DATA_DIRS(gsettings 库检索路径)。原 symlink 被移到
+    #      $out/bin/.flashfox-lite-wrapped。
+    #   2. 下面这段 wrapProgram 再包一层:注入 PATH/LD_LIBRARY_PATH/FRB/
+    #      GSETTINGS_SCHEMA_DIR 与 --run fix-device。gapps 那层被改名为
+    #      $out/bin/.flashfox-lite-wrapped_。
+    # 最终 exec 链:flashfox-lite → .flashfox-lite-wrapped_(gapps env)
+    #   → .flashfox-lite-wrapped(symlink)→ bundle 真 ELF。
+    # 两层都有存在理由:gapps 层补 GTK/gio 生态环境(图标/模块检索),
+    # 本层补闭源软件特有的 dlopen/schema/命令路径;不要试图合并成一层。
     # 运行时需要的外部命令与库(职责划分,勿随意删减):
     # - PATH + glib.bin:gsettings 命令(设置系统代理;NixOS 系统 PATH 无此命令)
     # - PATH + xdg-user-dirs:xdg-user-dir(path_provider 查 Downloads 等目录,
