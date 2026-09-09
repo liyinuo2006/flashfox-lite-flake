@@ -67,7 +67,8 @@
       };
 
       # NixOS 模块:系统级安装(全用户可见,含桌面入口,支持 TUN)。
-      # TUN 的实现与限制详见 package.nix 的 tunSupport 分支与 AGENTS.md。
+      # TUN 的实现与限制详见 package.nix 的 tunSupport 分支与 AGENTS.md;
+      # 3.0.6 时代完整调研见 TUN-RESEARCH.md(历史档案)。
       nixosModules.default =
         {
           lib,

@@ -1,9 +1,11 @@
 # AGENTS.md — flashfox-lite-flake
 
 闪狐云 Lite（机场代理客户端）的 Nix 打包仓库。闭源 deb vendor 进 `vendor/`，纯 flake
-构建。**本文件是仓库唯一权威知识入口**：机制原理、版本差异、排障命令、升级流程都在这里。
-（历史调研全文 TUN-RESEARCH.md 已删除——需要原始 diag 数据/被推翻的假设时用
-`git log`/`git show` 从历史提交找回。）
+构建。**本文件是仓库日常维护的唯一入口**：机制原理、版本差异、排障命令、升级流程都在
+这里，改代码/排障先读本文件。
+（完整历史调研档案见 [TUN-RESEARCH.md](./TUN-RESEARCH.md)：3.0.6 时代全部尝试过程、
+原始诊断数据、被推翻的假设。日常不需要读它；只有遇到新版本/新问题、需要对照"以前
+见过的现象"时再翻。两文件的重复信息以本文件为准。）
 
 ## 硬性规则
 
@@ -23,7 +25,8 @@ flake.nix        # 输出:packages / checks / overlays / nixosModules / homeModu
 package.nix      # 打包:deb 解包 → /opt bundle → $out/share;wrapProgram 注入环境;tunSupport 布局
 vendor/          # 官方 deb(版本泛化引用 FlashFoxLite-${version}-linux-amd64.deb)
 README.md        # 用户向文档(快速开始/验证/升级步骤)
-AGENTS.md        # 本文件(机制/原理/排障/版本史唯一入口)
+AGENTS.md        # 维护入口(机制/原理/排障/版本史,日常读这个)
+TUN-RESEARCH.md  # 历史调研档案(3.0.6 排障全程原始记录,可选查阅)
 ```
 
 ## 应用架构（闭源,基于解包+strings+运行时推断）
