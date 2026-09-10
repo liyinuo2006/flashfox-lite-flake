@@ -178,15 +178,19 @@ sudo ip rule del pref 9010; sudo ip route flush table 2022; sudo ip link del Met
 ## 实测过的行为基线（3.2.1,2026-09-10）
 
 - TUN 直连 google/baidu 200/302;7892 走 google 302/youtube 200/baidu 200
-- **TUN 与系统代理可同时开,互不影响**(状态干净时实测 7892 走国外正常,
-  TUN 直连正常)——不存在"必须二选一"的固有冲突
-- **正常关 TUN 闪狐会自清理**(接口 persist off 随 Core 关 fd 自动消失,
-  9000-9010 规则/2022 表同步清除,已实测)——不需要任何手动干预或兜底服务
+- **TUN 与系统代理可同时开,互不影响**（干净状态下实测 7892 走国外正常、
+  TUN 直连正常）——不存在"必须二选一"的固有冲突
+- **正常关 TUN 闪狐会自清理**（接口 persist off 随 Core 关 fd 自动消失,
+  9000-9010 规则/2022 表同步清除,已实测）
+- **异常路径会残留**:Core 被强杀/GUI 崩溃/升级切换时,内核只回收 persist off
+  接口,不回收用户态 ip rule/路由表 → 残留有粘性(新 Core 不清别人的残留) →
+  系统代理 7892 走国外全挂。模块的 flashfox-tun-cleanup 服务(15s 周期)兜底
+  自动清理,并写 journal 日志便于观测
+- ⚠ 残留的**确切触发条件尚未 100% 钉死**（曾见 GUI 正常关闭后仍有残留的个案,
+  也可能混有更早遗留的状态）;cleanup 服务加日志后可持续积累数据,再决定去留
 - Core 以 root 跑（Uid 1000/0/0/0）、Core 路径 `root:root -rws--x--x`、开 TUN 免密
 - TUN 开启时 mihomo 的 dns.listen(1053)不监听、无 iptables REDIRECT 属正常现象
   （DNS 劫持走 TUN 内 `dns-hijack: any:53`）,不是故障
-- ⚠ 曾经的"关 TUN 后 7892 国外全挂"是升级过渡期的一次性故障:
-  数据目录迁移(ffclient.app→com.ffclient.app)导致 fix-device 写错目录、GUI 状态
-  与 Core 实际脱节,叠加调试期反复强杀 Core 产生残留。根因已修,正常使用不复现。
-  万一再现(异常强杀 Core 后 9000-9010/2022 残留),手动清理:
-  `sudo ip rule del pref 9000..9002/9010; sudo ip route flush table 2022; sudo ip link del Meta`
+- 7892 走国外全挂时的排查顺序:①残留 TUN（Meta/2022/9000-9010,等 cleanup
+  服务或手动清）→ ②数据目录（GUI 是否真在写 com.ffclient.app）→ ③gsettings
+  schema → ④节点本身
